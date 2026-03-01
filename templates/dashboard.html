@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – CryptoLens{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+    <h2><i class="fas fa-chart-line"></i> Dashboard</h2>
+    <p>Real-time cryptocurrency analytics and market overview</p>
+</div>
+
+<!-- Coin Selector Cards -->
+<div class="coin-grid fade-in-up delay-1">
+    {% for coin in coins %}
+    <div class="coin-card" onclick="selectCoin('{{ coin.symbol }}')" id="coin-card-{{ coin.symbol }}"
+        data-symbol="{{ coin.symbol }}">
+        <div class="coin-card-header">
+            <span class="coin-symbol">{{ coin.symbol }}</span>
+            <span class="coin-change {{ 'positive' if coin.change >= 0 else 'negative' }}">
+                <i class="fas {{ 'fa-caret-up' if coin.change >= 0 else 'fa-caret-down' }}"></i>
+                {{ "%.2f"|format(coin.change|abs) }}%
+            </span>
+        </div>
+        <div class="coin-name">{{ coin.name }}</div>
+        <div class="coin-price">${{ "%.2f"|format(coin.price) if coin.price > 1 else "%.6f"|format(coin.price) }}</div>
+        <div class="coin-volume">
+            <i class="fas fa-chart-bar"></i> Vol: ${{ "{:,.0f}".format(coin.volume) }}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Stats Row -->
+<div class="stats-grid fade-in-up delay-2" id="stats-grid">
+    <div class="stat-card">
+        <i class="fas fa-dollar-sign"></i>
+        <div class="stat-value" id="stat-price">--</div>
+        <div class="stat-label">Current Price</div>
+    </div>
+    <div class="stat-card">
+        <i class="fas fa-exchange-alt"></i>
+        <div class="stat-value" id="stat-change">--</div>
+        <div class="stat-label">24h Change</div>
+    </div>
+    <div class="stat-card">
+        <i class="fas fa-globe"></i>
+        <div class="stat-value" id="stat-mcap">--</div>
+        <div class="stat-label">Market Cap</div>
+    </div>
+    <div class="stat-card">
+        <i class="fas fa-bolt"></i>
+        <div class="stat-value" id="stat-volatility">--</div>
+        <div class="stat-label">Volatility Index</div>
+    </div>
+</div>
+
+<!-- Control Bar -->
+<div class="control-bar fade-in-up delay-2">
+    <button class="btn-control active" onclick="setTimeRange(365)" id="btn-1y">1Y</button>
+    <button class="btn-control" onclick="setTimeRange(180)" id="btn-6m">6M</button>
+    <button class="btn-control" onclick="setTimeRange(90)" id="btn-3m">3M</button>
+    <button class="btn-control" onclick="setTimeRange(30)" id="btn-1m">1M</button>
+    <div style="flex:1;"></div>
+    <button class="btn-control" onclick="exportCSV()" id="btn-export-csv">
+        <i class="fas fa-download"></i> CSV
+    </button>
+    <button class="btn-control" onclick="exportPNG()" id="btn-export-png">
+        <i class="fas fa-image"></i> PNG
+    </button>
+    <button class="btn-control" onclick="refreshData()" id="btn-refresh">
+        <i class="fas fa-sync-alt"></i> Refresh
+    </button>
+</div>
+
+<!-- Main Charts -->
+<div class="chart-container fade-in-up delay-3">
+    <div class="chart-title"><i class="fas fa-chart-line"></i> OHLCV Candlestick Chart</div>
+    <div id="chart-candlestick" style="height:420px;"></div>
+</div>
+
+<div class="charts-row fade-in-up delay-3">
+    <div class="chart-container">
+        <div class="chart-title"><i class="fas fa-chart-area"></i> Price with Moving Averages (MA20 / MA50)</div>
+        <div id="chart-ma" style="height:320px;"></div>
+    </div>
+    <div class="chart-container">
+        <div class="chart-title"><i class="fas fa-chart-bar"></i> Volume</div>
+        <div id="chart-volume" style="height:320px;"></div>
+    </div>
+</div>
+
+<div class="charts-row fade-in-up delay-4">
+    <div class="chart-container">
+        <div class="chart-title"><i class="fas fa-wave-square"></i> RSI (Relative Strength Index)</div>
+        <div id="chart-rsi" style="height:280px;"></div>
+    </div>
+    <div class="chart-container">
+        <div class="chart-title"><i class="fas fa-signal"></i> MACD</div>
+        <div id="chart-macd" style="height:280px;"></div>
+    </div>
+</div>
+
+<!-- Correlation + Risk -->
+<div class="charts-row fade-in-up delay-4">
+    <div class="chart-container">
+        <div class="chart-title"><i class="fas fa-th"></i> Correlation Matrix</div>
+        <div id="chart-correlation" style="height:400px;"></div>
+    </div>
+    <div class="chart-container">
+        <div class="chart-title"><i class="fas fa-shield-alt"></i> Risk Analysis</div>
+        <div id="risk-panel">
+            <div style="padding:20px 0;">
+                <div id="risk-items"></div>
+            </div>
+        </div>
+        <div style="margin-top:20px;">
+            <div class="chart-title"><i class="fas fa-tachometer-alt"></i> Trend Strength</div>
+            <div id="chart-trend" style="height:180px;"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Loading -->
+<div class="spinner-overlay" id="loading" style="display:none;">
+    <div style="text-align:center;">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading data…</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+<script>
+    // Initialize with first coin
+    document.addEventListener('DOMContentLoaded', function () {
+        {% if coins | length > 0 %}
+        selectCoin('{{ coins[0].symbol }}');
+        {% endif %}
+        loadCorrelation();
+
+        // Auto-refresh every 30s
+        setInterval(function () {
+            if (currentCoin) refreshData();
+        }, 30000);
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol }} – CryptoLens{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+    <h2><i class="fas fa-coins"></i> {{ profile.name }} ({{ symbol }})</h2>
+    <p>Detailed technical analysis and historical data</p>
+</div>
+
+<!-- Stats -->
+<div class="stats-grid fade-in-up delay-1" id="detail-stats">
+    <div class="stat-card">
+        <i class="fas fa-dollar-sign"></i>
+        <div class="stat-value" id="d-price">--</div>
+        <div class="stat-label">Price</div>
+    </div>
+    <div class="stat-card">
+        <i class="fas fa-exchange-alt"></i>
+        <div class="stat-value" id="d-change">--</div>
+        <div class="stat-label">24h Change</div>
+    </div>
+    <div class="stat-card">
+        <i class="fas fa-chart-bar"></i>
+        <div class="stat-value" id="d-volume">--</div>
+        <div class="stat-label">Volume</div>
+    </div>
+    <div class="stat-card">
+        <i class="fas fa-globe"></i>
+        <div class="stat-value" id="d-mcap">--</div>
+        <div class="stat-label">Market Cap</div>
+    </div>
+</div>
+
+<!-- Controls -->
+<div class="control-bar fade-in-up delay-1">
+    <button class="btn-control" onclick="loadDetail('all')" id="d-all">All</button>
+    <button class="btn-control active" onclick="loadDetail(365)" id="d-1y">1Y</button>
+    <button class="btn-control" onclick="loadDetail(180)" id="d-6m">6M</button>
+    <button class="btn-control" onclick="loadDetail(90)" id="d-3m">3M</button>
+    <button class="btn-control" onclick="loadDetail(30)" id="d-1m">1M</button>
+    <div style="flex:1;"></div>
+    <a href="/api/export/csv?coin={{ symbol }}" class="btn-control" id="d-export">
+        <i class="fas fa-download"></i> Export CSV
+    </a>
+</div>
+
+<!-- Candlestick -->
+<div class="chart-container fade-in-up delay-2">
+    <div class="chart-title"><i class="fas fa-chart-line"></i> {{ symbol }} Candlestick + MA20/MA50</div>
+    <div id="d-candlestick" style="height:480px;"></div>
+</div>
+
+<!-- Volume + RSI -->
+<div class="charts-row fade-in-up delay-3">
+    <div class="chart-container">
+        <div class="chart-title"><i class="fas fa-chart-bar"></i> Volume</div>
+        <div id="d-volume-chart" style="height:300px;"></div>
+    </div>
+    <div class="chart-container">
+        <div class="chart-title"><i class="fas fa-wave-square"></i> RSI</div>
+        <div id="d-rsi" style="height:300px;"></div>
+    </div>
+</div>
+
+<!-- MACD -->
+<div class="chart-container fade-in-up delay-4">
+    <div class="chart-title"><i class="fas fa-signal"></i> MACD</div>
+    <div id="d-macd" style="height:300px;"></div>
+</div>
+
+<!-- Loading -->
+<div class="spinner-overlay" id="detail-loading" style="display:none;">
+    <div style="text-align:center;">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading…</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+<script>
+    const SYMBOL = '{{ symbol }}';
+    let detailRange = 365;
+
+    function loadDetail(range) {
+        detailRange = range;
+        // Update button states
+        ['d-all', 'd-1y', 'd-6m', 'd-3m', 'd-1m'].forEach(id => document.getElementById(id).classList.remove('active'));
+        if (range === 'all') document.getElementById('d-all').classList.add('active');
+        else if (range === 365) document.getElementById('d-1y').classList.add('active');
+        else if (range === 180) document.getElementById('d-6m').classList.add('active');
+        else if (range === 90) document.getElementById('d-3m').classList.add('active');
+        else if (range === 30) document.getElementById('d-1m').classList.add('active');
+
+        const loading = document.getElementById('detail-loading');
+        loading.style.display = 'flex';
+
+        const endpoint = range === 'all' ? `/api/data/${SYMBOL}/all` : `/api/data/${SYMBOL}`;
+        fetch(endpoint)
+            .then(r => r.json())
+            .then(jsonData => {
+                loading.style.display = 'none';
+                let data = jsonData.data;
+                if (range !== 'all') data = data.slice(-range);
+
+                const dates = data.map(d => d.date);
+                const closes = data.map(d => d.close);
+                const opens = data.map(d => d.open);
+                const highs = data.map(d => d.high);
+                const lows = data.map(d => d.low);
+                const volumes = data.map(d => d.volume);
+
+                // Stats
+                if (data.length >= 2) {
+                    const last = data[data.length - 1], prev = data[data.length - 2];
+                    const change = ((last.close - prev.close) / prev.close * 100);
+                    document.getElementById('d-price').textContent = '$' + formatNum(last.close);
+                    document.getElementById('d-change').textContent = change.toFixed(2) + '%';
+                    document.getElementById('d-change').style.color = change >= 0 ? '#10b981' : '#ef4444';
+                    document.getElementById('d-volume').textContent = '$' + formatBig(last.volume);
+                    document.getElementById('d-mcap').textContent = '$' + formatBig(last.market_cap);
+                }
+
+                const ma20 = computeMA(closes, 20);
+                const ma50 = computeMA(closes, 50);
+
+                // Candlestick
+                Plotly.newPlot('d-candlestick', [
+                    {
+                        x: dates, open: opens, high: highs, low: lows, close: closes,
+                        type: 'candlestick', name: SYMBOL,
+                        increasing: { line: { color: '#10b981' } },
+                        decreasing: { line: { color: '#ef4444' } }
+                    },
+                    {
+                        x: dates, y: ma20, type: 'scatter', mode: 'lines', name: 'MA20',
+                        line: { color: '#f59e0b', width: 1.5 }
+                    },
+                    {
+                        x: dates, y: ma50, type: 'scatter', mode: 'lines', name: 'MA50',
+                        line: { color: '#3b82f6', width: 1.5 }
+                    }
+                ], { ...plotlyDarkLayout, xaxis: { ...plotlyDarkLayout.xaxis, rangeslider: { visible: false } } },
+                    { responsive: true });
+
+                // Volume
+                const volColors = data.map((d, i) => i > 0 && d.close >= data[i - 1].close ? '#10b981' : '#ef4444');
+                Plotly.newPlot('d-volume-chart', [{
+                    x: dates, y: volumes, type: 'bar', marker: { color: volColors, opacity: 0.7 }, name: 'Volume'
+                }], plotlyDarkLayout, { responsive: true });
+
+                // RSI
+                const rsi = computeRSI(closes, 14);
+                Plotly.newPlot('d-rsi', [
+                    {
+                        x: dates.slice(14), y: rsi, type: 'scatter', mode: 'lines',
+                        name: 'RSI(14)', line: { color: '#a855f7', width: 2 }
+                    },
+                    {
+                        x: [dates[14], dates[dates.length - 1]], y: [70, 70], mode: 'lines', name: 'Overbought',
+                        line: { color: '#ef4444', width: 1, dash: 'dash' }, showlegend: false
+                    },
+                    {
+                        x: [dates[14], dates[dates.length - 1]], y: [30, 30], mode: 'lines', name: 'Oversold',
+                        line: { color: '#10b981', width: 1, dash: 'dash' }, showlegend: false
+                    }
+                ], { ...plotlyDarkLayout, yaxis: { ...plotlyDarkLayout.yaxis, range: [0, 100] } }, { responsive: true });
+
+                // MACD
+                const macdData = computeMACD(closes);
+                Plotly.newPlot('d-macd', [
+                    {
+                        x: dates.slice(dates.length - macdData.macd.length), y: macdData.macd,
+                        type: 'scatter', mode: 'lines', name: 'MACD', line: { color: '#3b82f6', width: 2 }
+                    },
+                    {
+                        x: dates.slice(dates.length - macdData.signal.length), y: macdData.signal,
+                        type: 'scatter', mode: 'lines', name: 'Signal', line: { color: '#f59e0b', width: 2 }
+                    },
+                    {
+                        x: dates.slice(dates.length - macdData.histogram.length), y: macdData.histogram,
+                        type: 'bar', name: 'Histogram',
+                        marker: { color: macdData.histogram.map(v => v >= 0 ? '#10b981' : '#ef4444'), opacity: 0.6 }
+                    }
+                ], plotlyDarkLayout, { responsive: true });
+            })
+            .catch(err => {
+                document.getElementById('detail-loading').style.display = 'none';
+                console.error(err);
+            });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => loadDetail(365));
+</script>
+{% endblock %}

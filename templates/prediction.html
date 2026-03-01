@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% block title %}Predictions – CryptoLens{% endblock %}
+
+{% block content %}
+<div class="page-header fade-in-up">
+    <h2><i class="fas fa-brain"></i> ML Predictions</h2>
+    <p>AI-powered price forecasting using Linear Regression & Random Forest</p>
+</div>
+
+<!-- Controls -->
+<div class="control-bar fade-in-up delay-1">
+    <select class="select-dark" id="pred-coin" onchange="loadPredictions()">
+        {% for coin in supported %}
+        <option value="{{ coin }}">{{ coin }}</option>
+        {% endfor %}
+    </select>
+    <button class="btn-control active" id="btn-7d" onclick="setPredDays(7)">7 Days</button>
+    <button class="btn-control" id="btn-30d" onclick="setPredDays(30)">30 Days</button>
+    <div style="flex:1;"></div>
+    <button class="btn-control" onclick="loadPredictions()" id="btn-predict">
+        <i class="fas fa-magic"></i> Generate Forecast
+    </button>
+</div>
+
+<!-- Metrics -->
+<div class="metrics-grid fade-in-up delay-2" id="metrics-grid">
+    <div class="metric-card">
+        <div class="metric-label">LR R² Score</div>
+        <div class="metric-value neutral" id="metric-lr-r2">--</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">LR MAE</div>
+        <div class="metric-value neutral" id="metric-lr-mae">--</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">RF R² Score</div>
+        <div class="metric-value neutral" id="metric-rf-r2">--</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">RF MAE</div>
+        <div class="metric-value neutral" id="metric-rf-mae">--</div>
+    </div>
+</div>
+
+<!-- Actual vs Predicted Chart -->
+<div class="chart-container fade-in-up delay-3">
+    <div class="chart-title"><i class="fas fa-chart-line"></i> Actual vs Predicted (Test Set)</div>
+    <div id="chart-actual-vs-pred" style="height:400px;"></div>
+</div>
+
+<!-- Forecast Chart -->
+<div class="chart-container fade-in-up delay-3">
+    <div class="chart-title"><i class="fas fa-crystal-ball"></i> Price Forecast with Confidence Interval</div>
+    <div id="chart-forecast" style="height:400px;"></div>
+</div>
+
+<!-- Forecast Table -->
+<div class="card-glass fade-in-up delay-4">
+    <div class="card-header-custom">
+        <h3><i class="fas fa-table"></i> Forecast Data</h3>
+    </div>
+    <div style="overflow-x:auto;">
+        <table class="table-dark-custom" id="forecast-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Linear Regression</th>
+                    <th>Random Forest</th>
+                    <th>Confidence Lower</th>
+                    <th>Confidence Upper</th>
+                </tr>
+            </thead>
+            <tbody id="forecast-tbody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Loading -->
+<div class="spinner-overlay" id="pred-loading" style="display:none;">
+    <div style="text-align:center;">
+        <div class="spinner"></div>
+        <div class="loading-text">Training models & generating forecast…</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const plotlyDarkLayout = {
+        paper_bgcolor: '#1a1f2e',
+        plot_bgcolor: '#1a1f2e',
+        font: { color: '#94a3b8', family: 'Inter, sans-serif', size: 12 },
+        xaxis: { gridcolor: '#1e293b', linecolor: '#1e293b', zerolinecolor: '#1e293b' },
+        yaxis: { gridcolor: '#1e293b', linecolor: '#1e293b', zerolinecolor: '#1e293b' },
+        margin: { l: 50, r: 20, t: 20, b: 40 },
+        legend: { bgcolor: 'transparent', font: { color: '#94a3b8' } },
+        hoverlabel: { bgcolor: '#222839', font: { color: '#e2e8f0' } }
+    };
+
+    let predDays = 7;
+
+    function setPredDays(d) {
+        predDays = d;
+        document.getElementById('btn-7d').classList.toggle('active', d === 7);
+        document.getElementById('btn-30d').classList.toggle('active', d === 30);
+        loadPredictions();
+    }
+
+    function loadPredictions() {
+        const coin = document.getElementById('pred-coin').value;
+        const loading = document.getElementById('pred-loading');
+        loading.style.display = 'flex';
+
+        fetch(`/api/predictions/${coin}?days=${predDays}`)
+            .then(r => r.json())
+            .then(data => {
+                loading.style.display = 'none';
+                if (data.error) {
+                    alert(data.error);
+                    return;
+                }
+                renderMetrics(data.metrics);
+                renderActualVsPred(data.metrics);
+                renderForecast(data);
+                renderForecastTable(data);
+            })
+            .catch(err => {
+                loading.style.display = 'none';
+                console.error(err);
+            });
+    }
+
+    function renderMetrics(m) {
+        if (!m) return;
+        const lr = m.linear_regression;
+        const rf = m.random_forest;
+        setMetric('metric-lr-r2', lr.r2.toFixed(4), lr.r2 > 0.7 ? 'good' : lr.r2 > 0.4 ? 'warn' : 'bad');
+        setMetric('metric-lr-mae', '$' + lr.mae.toFixed(2), 'neutral');
+        setMetric('metric-rf-r2', rf.r2.toFixed(4), rf.r2 > 0.7 ? 'good' : rf.r2 > 0.4 ? 'warn' : 'bad');
+        setMetric('metric-rf-mae', '$' + rf.mae.toFixed(2), 'neutral');
+    }
+
+    function setMetric(id, val, cls) {
+        const el = document.getElementById(id);
+        el.textContent = val;
+        el.className = 'metric-value ' + cls;
+    }
+
+    function renderActualVsPred(m) {
+        if (!m) return;
+        const traces = [
+            {
+                x: m.test_dates, y: m.test_actual,
+                name: 'Actual', type: 'scatter', mode: 'lines',
+                line: { color: '#00d4aa', width: 2 }
+            },
+            {
+                x: m.test_dates, y: m.test_pred_lr,
+                name: 'Linear Regression', type: 'scatter', mode: 'lines',
+                line: { color: '#3b82f6', width: 2, dash: 'dot' }
+            },
+            {
+                x: m.test_dates, y: m.test_pred_rf,
+                name: 'Random Forest', type: 'scatter', mode: 'lines',
+                line: { color: '#f59e0b', width: 2, dash: 'dash' }
+            }
+        ];
+        Plotly.newPlot('chart-actual-vs-pred', traces, { ...plotlyDarkLayout }, { responsive: true });
+    }
+
+    function renderForecast(data) {
+        const traces = [
+            {
+                x: data.forecast_dates, y: data.confidence_upper,
+                name: 'Upper Bound', type: 'scatter', mode: 'lines',
+                line: { width: 0 }, showlegend: false
+            },
+            {
+                x: data.forecast_dates, y: data.confidence_lower,
+                name: 'Confidence Interval', type: 'scatter', mode: 'lines',
+                fill: 'tonexty', fillcolor: 'rgba(0,212,170,0.1)',
+                line: { width: 0 }
+            },
+            {
+                x: data.forecast_dates, y: data.forecast_lr,
+                name: 'Linear Regression', type: 'scatter', mode: 'lines+markers',
+                line: { color: '#3b82f6', width: 2 },
+                marker: { size: 5 }
+            },
+            {
+                x: data.forecast_dates, y: data.forecast_rf,
+                name: 'Random Forest', type: 'scatter', mode: 'lines+markers',
+                line: { color: '#00d4aa', width: 2 },
+                marker: { size: 5 }
+            }
+        ];
+        Plotly.newPlot('chart-forecast', traces, {
+            ...plotlyDarkLayout,
+            yaxis: { ...plotlyDarkLayout.yaxis, title: 'Price ($)' }
+        }, { responsive: true });
+    }
+
+    function renderForecastTable(data) {
+        const tbody = document.getElementById('forecast-tbody');
+        tbody.innerHTML = '';
+        data.forecast_dates.forEach((date, i) => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+            <td>${date}</td>
+            <td>$${data.forecast_lr[i].toFixed(4)}</td>
+            <td>$${data.forecast_rf[i].toFixed(4)}</td>
+            <td>$${data.confidence_lower[i].toFixed(4)}</td>
+            <td>$${data.confidence_upper[i].toFixed(4)}</td>
+        `;
+            tbody.appendChild(row);
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', loadPredictions);
+</script>
+{% endblock %}
